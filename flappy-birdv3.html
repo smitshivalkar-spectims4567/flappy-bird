@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flappy Bird - Level 3 (Alive & Juicy)</title>
+    <!-- Import Google Font for retro pixel graphics style -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            background: radial-gradient(circle, #1a2639 0%, #080c12 100%);
+            font-family: 'Press Start 2P', monospace, sans-serif;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .game-container {
+            text-align: center;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin: 0 0 5px 0;
+            color: #ffd700;
+            text-shadow: 3px 3px 0px #000;
+            letter-spacing: 1px;
+        }
+
+        .subtitle {
+            font-size: 9px;
+            color: #88d4aa;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        canvas {
+            display: block;
+            background: #87CEEB;
+            border: 6px solid #222;
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+        }
+
+        #restart {
+            display: none;
+            margin-top: 15px;
+            padding: 12px 24px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            color: #fff;
+            background: #e27c3e;
+            border: 3px solid #222;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #222;
+            transition: all 0.1s ease;
+            text-transform: uppercase;
+        }
+
+        #restart:hover {
+            background: #ff9d61;
+        }
+
+        #restart:active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #222;
+        }
+
+        .controls-hint {
+            font-size: 9px;
+            color: #5b6f8a;
+            margin-top: 15px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <h1>FLAPPY BIRD</h1>
+        <div class="subtitle">Level 3: Game Feels Alive</div>
+        <canvas id="game" width="500" height="500"></canvas>
+        <button id="restart">Restart Game</button>
+        <div class="controls-hint">
+            Press SPACEBAR or CLICK Canvas to flap.<br>
+            Web Audio API synthesis generates soft retro sound effects.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Physics constants
+        const GRAVITY = 0.27;
+        const JUMP = -6.0;
+        const MAX_FALL_SPEED = 8.5;
+        const PIPE_WIDTH = 70;
+        const PIPE_GAP = 125;
+        const PIPE_SPEED = 3.2;
+        const PIPE_SPACING = 230;
+        const GROUND_HEIGHT = 65;
+
+        // Game State Variables
+        let bird;
+        let pipes;
+        let clouds;
+        let particles = [];
+        let score;
+        let highScore = parseInt(localStorage.getItem('flappy_highscore')) || 0;
+        let gameStarted;
+        let isDying;
+        let gameOver;
+
+        // Visual offsets and juice trackers
+        let scoreScale = 1.0;
+        let shakeIntensity = 0;
+        let flashAlpha = 0;
+        let fadeAlpha = 0;
+        let fadeAction = null;
+        let groundOffset = 0;
+        let farHillsOffset = 0;
+        let nearHillsOffset = 0;
+
+        // --- Web Audio API Synth Sounds Engine ---
+        let audioCtx = null;
+
+        function initAudio() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            } catch (e) {
+                console.warn('Web Audio API not supported or blocked in this browser environment:', e);
+            }
+        }
+
+        function playJumpSound() {
+            initAudio();
+            if (!audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'triangle'; // Retro warm tone
+            osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(720, audioCtx.currentTime + 0.11);
+
+            gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.005, audioCtx.currentTime + 0.11);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.11);
+        }
+
+        function playScoreSound() {
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+
+            // Arpeggio beep 1 (C5)
+            const osc1 = audioCtx.createOscillator();
+            const gain1 = audioCtx.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(523.25, now);
+            gain1.gain.setValueAtTime(0.06, now);
+            gain1.gain.exponentialRampToValueAtTime(0.005, now + 0.07);
+            osc1.connect(gain1);
+            gain1.connect(audioCtx.destination);
+            osc1.start();
+            osc1.stop(now + 0.07);
+
+            // Arpeggio beep 2 (E5, delayed)
+            const osc2 = audioCtx.createOscillator();
+            const gain2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(659.25, now + 0.06);
+            gain2.gain.setValueAtTime(0.06, now + 0.06);
+            gain2.gain.exponentialRampToValueAtTime(0.005, now + 0.20);
+            osc2.connect(gain2);
+            gain2.connect(audioCtx.destination);
+            osc2.start(now + 0.06);
+            osc2.stop(now + 0.20);
+        }
+
+        function playCrashSound() {
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+
+            // Low frequency rumble sweep down
+            const osc = audioCtx.createOscillator();
+            const gainOsc = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(160, now);
+            osc.frequency.linearRampToValueAtTime(30, now + 0.35);
+
+            gainOsc.gain.setValueAtTime(0.18, now);
+            gainOsc.gain.exponentialRampToValueAtTime(0.005, now + 0.35);
+
+            osc.connect(gainOsc);
+            gainOsc.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(now + 0.35);
+
+            // Crash white noise burst
+            const bufferSize = audioCtx.sampleRate * 0.22;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(500, now);
+            filter.frequency.exponentialRampToValueAtTime(60, now + 0.22);
+
+            const gainNoise = audioCtx.createGain();
+            gainNoise.gain.setValueAtTime(0.18, now);
+            gainNoise.gain.exponentialRampToValueAtTime(0.005, now + 0.22);
+
+            noise.connect(filter);
+            filter.connect(gainNoise);
+            gainNoise.connect(audioCtx.destination);
+
+            noise.start();
+            noise.stop(now + 0.22);
+        }
+
+        function playRestartSound() {
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+            // Upward vintage arcade synth arpeggio (C4 -> E4 -> G4 -> C5)
+            const notes = [261.63, 329.63, 392.00, 523.25];
+            notes.forEach((freq, idx) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(freq, now + idx * 0.04);
+                gain.gain.setValueAtTime(0.05, now + idx * 0.04);
+                gain.gain.exponentialRampToValueAtTime(0.004, now + idx * 0.04 + 0.12);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now + idx * 0.04);
+                osc.stop(now + idx * 0.04 + 0.12);
+            });
+        }
+
+        // --- Particle System Class ---
+        class Particle {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type; // 'feather' or 'star'
+                
+                if (type === 'feather') {
+                    // Feathers float backwards slowly and float downwards gently
+                    this.vx = -PIPE_SPEED * 0.4 + (Math.random() - 0.5) * 1.5;
+                    this.vy = Math.random() * -1.2 - 0.4;
+                    this.size = Math.random() * 5 + 6;
+                    this.angle = Math.random() * Math.PI * 2;
+                    this.angularVelocity = (Math.random() - 0.5) * 0.08;
+                    this.decay = Math.random() * 0.012 + 0.01;
+                    this.color = Math.random() > 0.35 ? '#ffffff' : '#fef08a'; // Yellow or White
+                } else {
+                    // Star sparks burst rapidly in random directions
+                    this.vx = (Math.random() - 0.5) * 6;
+                    this.vy = (Math.random() - 0.5) * 6 - 1;
+                    this.size = Math.random() * 4 + 4;
+                    this.angle = Math.random() * Math.PI * 2;
+                    this.angularVelocity = (Math.random() - 0.5) * 0.15;
+                    this.decay = Math.random() * 0.022 + 0.018;
+                    const colors = ['#fef08a', '#f97316', '#60a5fa', '#4ade80', '#ffffff'];
+                    this.color = colors[Math.floor(Math.random() * colors.length)];
+                }
+                this.life = 1.0;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.angle += this.angularVelocity;
+
+                if (this.type === 'feather') {
+                    this.vy += 0.035; // Feather gravity drift
+                    this.vx *= 0.98;   // Horizontal drag
+                } else {
+                    this.vy += 0.14;   // Fast sparks gravity
+                    this.vx *= 0.96;
+                }
+
+                this.life -= this.decay;
+            }
+
+            draw(c) {
+                c.save();
+                c.translate(this.x, this.y);
+                c.rotate(this.angle);
+                c.globalAlpha = Math.max(0, this.life);
+                c.fillStyle = this.color;
+                c.strokeStyle = '#222';
+                c.lineWidth = 1;
+
+                if (this.type === 'feather') {
+                    // Draw feather contour
+                    c.beginPath();
+                    c.ellipse(0, 0, this.size, this.size * 0.45, 0, 0, Math.PI * 2);
+                    c.fill();
+                    c.stroke();
+                    // Draw central shaft line
+                    c.beginPath();
+                    c.moveTo(-this.size, 0);
+                    c.lineTo(this.size * 0.9, 0);
+                    c.stroke();
+                } else {
+                    // Draw sparkly diamond/star shape
+                    c.beginPath();
+                    c.moveTo(0, -this.size);
+                    c.lineTo(this.size * 0.5, -this.size * 0.15);
+                    c.lineTo(this.size, 0);
+                    c.lineTo(this.size * 0.5, this.size * 0.15);
+                    c.lineTo(0, this.size);
+                    c.lineTo(-this.size * 0.5, this.size * 0.15);
+                    c.lineTo(-this.size, 0);
+                    c.lineTo(-this.size * 0.5, -this.size * 0.15);
+                    c.closePath();
+                    c.fill();
+                }
+                c.restore();
+            }
+        }
+
+        // Initialize clouds with Parallax layer indices
+        clouds = [
+            { x: 30, y: 50, size: 16, speed: 0.06, alpha: 0.4 },  // Far layer
+            { x: 200, y: 100, size: 36, speed: 0.20, alpha: 0.8 }, // Near layer
+            { x: 340, y: 65, size: 22, speed: 0.11, alpha: 0.5 },  // Mid layer
+            { x: 480, y: 120, size: 28, speed: 0.16, alpha: 0.7 }  // Mid-Near layer
+        ];
+
+        function reset() {
+            bird = { 
+                x: 100, 
+                y: 200, 
+                vy: 0, 
+                size: 18, 
+                angle: 0,
+                scaleX: 1.0,
+                scaleY: 1.0
+            };
+            pipes = [];
+            particles = [];
+            score = 0;
+            gameStarted = false;
+            isDying = false;
+            gameOver = false;
+            scoreScale = 1.0;
+            shakeIntensity = 0;
+            flashAlpha = 0;
+            restartBtn.style.display = 'none';
+
+            spawnPipe();
+        }
+
+        function spawnPipe() {
+            const margin = 50;
+            const minGapY = margin;
+            const maxGapY = canvas.height - GROUND_HEIGHT - PIPE_GAP - margin;
+            const gapY = Math.random() * (maxGapY - minGapY) + minGapY;
+            pipes.push({ x: canvas.width, gapY, passed: false });
+        }
+
+        function jump() {
+            if (gameOver || isDying || fadeAction !== null) return;
+            
+            if (!gameStarted) {
+                gameStarted = true;
+            }
+            
+            bird.vy = JUMP;
+            playJumpSound();
+
+            // Squash & stretch: stretch vertically, squash horizontally
+            bird.scaleX = 0.80;
+            bird.scaleY = 1.24;
+
+            // Spawn feather particles from the rear/bottom of the bird
+            const featherCount = Math.floor(Math.random() * 2) + 3; // 3 to 4 feathers
+            for (let i = 0; i < featherCount; i++) {
+                particles.push(new Particle(bird.x, bird.y + bird.size / 2, 'feather'));
+            }
+        }
+
+        function triggerDeath() {
+            if (!isDying && !gameOver) {
+                isDying = true;
+                shakeIntensity = 13;
+                flashAlpha = 0.8;
+                playCrashSound();
+
+                // Spawn heavy burst of feather and spark particles radiating outward
+                for (let i = 0; i < 9; i++) {
+                    particles.push(new Particle(bird.x + bird.size / 2, bird.y + bird.size / 2, 'feather'));
+                }
+                for (let i = 0; i < 13; i++) {
+                    particles.push(new Particle(bird.x + bird.size / 2, bird.y + bird.size / 2, 'star'));
+                }
+            }
+        }
+
+        function triggerRestart() {
+            if (fadeAction === null) {
+                fadeAction = 'out';
+                fadeAlpha = 0;
+                restartBtn.style.display = 'none';
+            }
+        }
+
+        function update() {
+            // Screen Fade Transition
+            if (fadeAction === 'out') {
+                fadeAlpha += 0.07;
+                if (fadeAlpha >= 1.0) {
+                    fadeAlpha = 1.0;
+                    reset();
+                    playRestartSound();
+                    fadeAction = 'in';
+                }
+                return;
+            } else if (fadeAction === 'in') {
+                fadeAlpha -= 0.07;
+                if (fadeAlpha <= 0.0) {
+                    fadeAlpha = 0.0;
+                    fadeAction = null;
+                }
+            }
+
+            // Update particles regardless of whether game is over or active
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            if (gameOver) {
+                if (shakeIntensity > 0) {
+                    shakeIntensity *= 0.85;
+                    if (shakeIntensity < 0.1) shakeIntensity = 0;
+                }
+                if (flashAlpha > 0) {
+                    flashAlpha -= 0.04;
+                }
+                return;
+            }
+
+            // If the bird hits a pipe, it enters the dying state where it drops under gravity to the ground
+            if (isDying) {
+                bird.vy += GRAVITY;
+                if (bird.vy > MAX_FALL_SPEED) bird.vy = MAX_FALL_SPEED;
+                bird.y += bird.vy;
+
+                // Rotate bird face-down as it crashes
+                let targetAngle = Math.min(1.4, bird.vy * 0.18);
+                bird.angle += (targetAngle - bird.angle) * 0.15;
+
+                // Decay effects
+                if (shakeIntensity > 0) {
+                    shakeIntensity *= 0.85;
+                    if (shakeIntensity < 0.1) shakeIntensity = 0;
+                }
+                if (flashAlpha > 0) {
+                    flashAlpha -= 0.05;
+                }
+
+                // Check ground contact
+                if (bird.y + bird.size - 3 > canvas.height - GROUND_HEIGHT) {
+                    bird.y = canvas.height - GROUND_HEIGHT - bird.size + 3;
+                    gameOver = true;
+                    restartBtn.style.display = 'block';
+                    
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('flappy_highscore', highScore);
+                    }
+                }
+                return; // Stop updating other game elements during dying fall
+            }
+
+            // If the game has not started yet, hover the bird and run ambient animations
+            if (!gameStarted) {
+                farHillsOffset -= 0.15;
+                nearHillsOffset -= 0.5;
+                groundOffset = (groundOffset - 2.5) % 24;
+
+                for (let cloud of clouds) {
+                    cloud.x -= cloud.speed;
+                    if (cloud.x < -cloud.size * 3) {
+                        cloud.x = canvas.width + cloud.size * 3;
+                        cloud.y = Math.random() * 120 + 30;
+                    }
+                }
+
+                // Smooth bobbing hover logic
+                bird.y = 200 + Math.sin(Date.now() * 0.005) * 8;
+                bird.angle = Math.sin(Date.now() * 0.003) * 0.08;
+
+                bird.scaleX += (1.0 - bird.scaleX) * 0.13;
+                bird.scaleY += (1.0 - bird.scaleY) * 0.13;
+                return;
+            }
+
+            // --- Normal Playing Game Object Updates ---
+
+            // 1. Parallax offsets (indefinitely scroll without jumps)
+            farHillsOffset -= 0.2;
+            nearHillsOffset -= 0.65;
+            groundOffset = (groundOffset - PIPE_SPEED) % 24;
+
+            // 2. Background Clouds
+            for (let cloud of clouds) {
+                cloud.x -= cloud.speed;
+                if (cloud.x < -cloud.size * 3) {
+                    cloud.x = canvas.width + cloud.size * 3;
+                    cloud.y = Math.random() * 120 + 30;
+                }
+            }
+
+            // 3. Bird physics
+            bird.vy += GRAVITY;
+            if (bird.vy > MAX_FALL_SPEED) bird.vy = MAX_FALL_SPEED;
+            bird.y += bird.vy;
+
+            // Decay squash & stretch factors back to normal (1.0)
+            bird.scaleX += (1.0 - bird.scaleX) * 0.13;
+            bird.scaleY += (1.0 - bird.scaleY) * 0.13;
+
+            // Bird angle calculation
+            let targetAngle = 0;
+            if (bird.vy < 0) {
+                targetAngle = -0.42;
+            } else {
+                targetAngle = Math.min(1.25, bird.vy * 0.15);
+            }
+            bird.angle += (targetAngle - bird.angle) * 0.15;
+
+            // Boundaries
+            const birdCollisionMargin = 3;
+            const birdTop = bird.y + birdCollisionMargin;
+            const birdBottom = bird.y + bird.size - birdCollisionMargin;
+
+            if (birdTop < 0 || birdBottom > canvas.height - GROUND_HEIGHT) {
+                triggerDeath();
+            }
+
+            // Pipe spawn
+            if (pipes.length === 0 || (canvas.width - pipes[pipes.length - 1].x) >= PIPE_SPACING) {
+                spawnPipe();
+            }
+
+            // Pipes updates & Collisions
+            for (let i = pipes.length - 1; i >= 0; i--) {
+                const pipe = pipes[i];
+                pipe.x -= PIPE_SPEED;
+
+                if (pipe.x < -PIPE_WIDTH - 20) {
+                    pipes.splice(i, 1);
+                    continue;
+                }
+
+                // Check collision
+                const birdLeft = bird.x + birdCollisionMargin;
+                const birdRight = bird.x + bird.size - birdCollisionMargin;
+
+                const hitX = birdRight > pipe.x && birdLeft < pipe.x + PIPE_WIDTH;
+                if (hitX) {
+                    const hitY = birdTop < pipe.gapY || birdBottom > pipe.gapY + PIPE_GAP;
+                    if (hitY) {
+                        triggerDeath();
+                    }
+                }
+
+                // Scoring (Point trigger)
+                if (!pipe.passed && pipe.x + PIPE_WIDTH < bird.x) {
+                    pipe.passed = true;
+                    score++;
+                    scoreScale = 1.48; // trigger pop
+                    playScoreSound();
+
+                    // Spawn sparkly point sparks drifting outwards
+                    for (let s = 0; s < 7; s++) {
+                        particles.push(new Particle(canvas.width / 2 + (Math.random() - 0.5) * 50, 70 + (Math.random() - 0.5) * 20, 'star'));
+                    }
+                }
+            }
+
+            // Damping score scale pop
+            scoreScale += (1.0 - scoreScale) * 0.14;
+
+            // Decay flash
+            if (flashAlpha > 0) {
+                flashAlpha -= 0.05;
+            }
+        }
+
+        function draw() {
+            // Apply camera shake translation
+            ctx.save();
+            if (shakeIntensity > 0) {
+                const dx = (Math.random() - 0.5) * shakeIntensity;
+                const dy = (Math.random() - 0.5) * shakeIntensity;
+                ctx.translate(dx, dy);
+            }
+
+            // 1. Sky Gradient
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGrad.addColorStop(0, '#2b72df');  // Deep retro blue
+            skyGrad.addColorStop(0.7, '#599df7'); // Mid blue
+            skyGrad.addColorStop(1, '#97ecf3');   // Warm gradient bottom
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 2. Parallax Clouds (drawn behind background skyline)
+            for (let cloud of clouds) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${cloud.alpha})`;
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y, cloud.size, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 0.6, cloud.y - cloud.size * 0.25, cloud.size * 0.8, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 1.2, cloud.y, cloud.size * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 3. DISTANT PARALLAX SKYLINE (Layer 1: Far Mountains)
+            ctx.fillStyle = '#4f96e4';
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            for (let x = 0; x <= canvas.width + 40; x += 40) {
+                const worldX = x - farHillsOffset;
+                const y = canvas.height - GROUND_HEIGHT - 65 - Math.sin(worldX * 0.005) * 35 - Math.sin(worldX * 0.012) * 15;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(canvas.width, canvas.height - GROUND_HEIGHT);
+            ctx.lineTo(0, canvas.height - GROUND_HEIGHT);
+            ctx.closePath();
+            ctx.fill();
+
+            // 4. PARALLAX SKYLINE (Layer 2: Near Hills - Drawn with continuous outline)
+            const nearGrad = ctx.createLinearGradient(0, canvas.height - GROUND_HEIGHT - 60, 0, canvas.height - GROUND_HEIGHT);
+            nearGrad.addColorStop(0, '#369727');
+            nearGrad.addColorStop(1, '#5bb848');
+            ctx.fillStyle = nearGrad;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            for (let x = 0; x <= canvas.width + 20; x += 20) {
+                const worldX = x - nearHillsOffset;
+                const y = canvas.height - GROUND_HEIGHT - 35 - Math.abs(Math.sin(worldX * 0.015)) * 25 - Math.sin(worldX * 0.005) * 10;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(canvas.width, canvas.height - GROUND_HEIGHT);
+            ctx.lineTo(0, canvas.height - GROUND_HEIGHT);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Draw hill contour line (no vertical or bottom lines stroked)
+            ctx.beginPath();
+            for (let x = 0; x <= canvas.width + 20; x += 20) {
+                const worldX = x - nearHillsOffset;
+                const y = canvas.height - GROUND_HEIGHT - 35 - Math.abs(Math.sin(worldX * 0.015)) * 25 - Math.sin(worldX * 0.005) * 10;
+                if (x === 0) ctx.moveTo(0, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = '#237318';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            // 5. Draw Shaded Pipes
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#222';
+            for (let pipe of pipes) {
+                const topHeight = pipe.gapY;
+                const lipHeight = 24;
+                const lipWidth = PIPE_WIDTH + 8;
+                const lipX = pipe.x - 4;
+
+                // --- Top Pipe Cylinder ---
+                let gradTop = ctx.createLinearGradient(pipe.x, 0, pipe.x + PIPE_WIDTH, 0);
+                gradTop.addColorStop(0, '#73c93a');
+                gradTop.addColorStop(0.25, '#a5f560');
+                gradTop.addColorStop(0.7, '#4e991e');
+                gradTop.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradTop;
+                ctx.fillRect(pipe.x, 0, PIPE_WIDTH, topHeight);
+                ctx.strokeRect(pipe.x, -3, PIPE_WIDTH, topHeight + 3);
+
+                // Top Pipe Lip Cap
+                let gradLip = ctx.createLinearGradient(lipX, 0, lipX + lipWidth, 0);
+                gradLip.addColorStop(0, '#73c93a');
+                gradLip.addColorStop(0.25, '#a5f560');
+                gradLip.addColorStop(0.7, '#4e991e');
+                gradLip.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradLip;
+                ctx.fillRect(lipX, topHeight - lipHeight, lipWidth, lipHeight);
+                ctx.strokeRect(lipX, topHeight - lipHeight, lipWidth, lipHeight);
+
+                // --- Bottom Pipe Cylinder ---
+                const bottomY = pipe.gapY + PIPE_GAP;
+                const bottomHeight = canvas.height - GROUND_HEIGHT - bottomY;
+                
+                let gradBottom = ctx.createLinearGradient(pipe.x, 0, pipe.x + PIPE_WIDTH, 0);
+                gradBottom.addColorStop(0, '#73c93a');
+                gradBottom.addColorStop(0.25, '#a5f560');
+                gradBottom.addColorStop(0.7, '#4e991e');
+                gradBottom.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradBottom;
+                ctx.fillRect(pipe.x, bottomY, PIPE_WIDTH, bottomHeight);
+                ctx.strokeRect(pipe.x, bottomY, PIPE_WIDTH, bottomHeight + 3);
+
+                // Bottom Pipe Lip Cap
+                ctx.fillStyle = gradLip;
+                ctx.fillRect(lipX, bottomY, lipWidth, lipHeight);
+                ctx.strokeRect(lipX, bottomY, lipWidth, lipHeight);
+            }
+
+            // 6. Draw Particles (Feathers and Star sparks)
+            drawParticles(ctx);
+
+            // 7. Draw Polished Vector Bird (with squash & stretch scaling)
+            ctx.save();
+            ctx.translate(bird.x + bird.size / 2, bird.y + bird.size / 2);
+            ctx.rotate(bird.angle);
+            ctx.scale(bird.scaleX, bird.scaleY);
+
+            // Body
+            ctx.fillStyle = '#ffdf00';
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, bird.size * 0.72, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Belly highlight
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(-bird.size * 0.2, bird.size * 0.2, bird.size * 0.42, 0, Math.PI, false);
+            ctx.fill();
+
+            // Eye
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(bird.size * 0.25, -bird.size * 0.25, bird.size * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(bird.size * 0.32, -bird.size * 0.25, bird.size * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Beak
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.moveTo(bird.size * 0.52, -bird.size * 0.12);
+            ctx.lineTo(bird.size * 1.05, 0);
+            ctx.lineTo(bird.size * 0.52, bird.size * 0.25);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Wing animation cycle based on current vertical velocity
+            let wingFlapRate = 0.08;
+            if (bird.vy < 0) {
+                wingFlapRate = 0.25; // Flap rapidly on jump
+            } else if (bird.vy > 1.8) {
+                wingFlapRate = 0.03; // Drag state
+            } else {
+                wingFlapRate = 0.10; // Glide
+            }
+            const wingFlapAngle = Math.sin(Date.now() * wingFlapRate) * 0.45;
+
+            ctx.save();
+            ctx.translate(-bird.size * 0.25, -bird.size * 0.05);
+            ctx.rotate(wingFlapAngle);
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, bird.size * 0.38, bird.size * 0.24, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.restore(); // Restore bird scale/rotation matrix
+
+            // 8. Ground & Wind Swaying Grass
+            // Base dirt block
+            ctx.fillStyle = '#d97706';
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
+            
+            // Grass strip
+            ctx.fillStyle = '#22c55e';
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, 14);
+            
+            // Scrolling grass checkers
+            ctx.fillStyle = '#15803d';
+            for (let x = groundOffset; x < canvas.width + 24; x += 24) {
+                ctx.fillRect(x, canvas.height - GROUND_HEIGHT, 8, 14);
+            }
+
+            // Animated/Swaying Individual Grass Blades (Modulo matches spacing to eliminate jitter!)
+            const grassSway = Math.sin(Date.now() * 0.005) * 5;
+            ctx.strokeStyle = '#15803d';
+            ctx.lineWidth = 3;
+            for (let x = (groundOffset % 15); x < canvas.width + 15; x += 15) {
+                ctx.beginPath();
+                ctx.moveTo(x, canvas.height - GROUND_HEIGHT + 14);
+                ctx.quadraticCurveTo(x + grassSway * 0.5, canvas.height - GROUND_HEIGHT + 6, x + grassSway, canvas.height - GROUND_HEIGHT - 1);
+                ctx.stroke();
+            }
+
+            // Ground Top Outline
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - GROUND_HEIGHT);
+            ctx.lineTo(canvas.width, canvas.height - GROUND_HEIGHT);
+            ctx.stroke();
+
+            // 9. Centered pop score HUD (while alive or falling)
+            if (!gameOver) {
+                ctx.save();
+                ctx.translate(canvas.width / 2, 70);
+                ctx.scale(scoreScale, scoreScale);
+                ctx.font = '36px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Shadow
+                ctx.fillStyle = '#000';
+                ctx.fillText(score, 4, 4);
+                
+                // Text
+                ctx.fillStyle = '#fff';
+                ctx.fillText(score, 0, 0);
+                ctx.restore();
+            }
+
+            ctx.restore(); // Restore camera shake translate matrix
+
+            // 10. Flash Screen death reaction
+            if (flashAlpha > 0) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 11. Custom "GET READY" / Start Screen HUD overlays
+            if (!gameStarted && !gameOver && !isDying) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                ctx.font = '22px "Press Start 2P"';
+                ctx.fillStyle = '#fff';
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 5;
+                ctx.strokeText('GET READY', canvas.width / 2, canvas.height / 2 - 45);
+                ctx.fillText('GET READY', canvas.width / 2, canvas.height / 2 - 45);
+
+                ctx.font = '9px "Press Start 2P"';
+                ctx.fillStyle = '#ffe135';
+                ctx.strokeText('CLICK OR SPACEBAR TO JUMP', canvas.width / 2, canvas.height / 2 + 35);
+                ctx.fillText('CLICK OR SPACEBAR TO JUMP', canvas.width / 2, canvas.height / 2 + 35);
+            }
+
+            // 12. Retro Game Over board overlay (appears only when bird hits ground)
+            if (gameOver && fadeAction === null) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const boardWidth = 320;
+                const boardHeight = 180;
+                const boardX = (canvas.width - boardWidth) / 2;
+                const boardY = (canvas.height - boardHeight) / 2;
+
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(boardX + 6, boardY + 6, boardWidth, boardHeight);
+
+                ctx.fillStyle = '#fef08a';
+                ctx.strokeStyle = '#d97706';
+                ctx.lineWidth = 5;
+                ctx.fillRect(boardX, boardY, boardWidth, boardHeight);
+                ctx.strokeRect(boardX, boardY, boardWidth, boardHeight);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.font = '18px "Press Start 2P"';
+                ctx.fillStyle = '#dc2626';
+                ctx.fillText('GAME OVER', canvas.width / 2, boardY + 35);
+
+                ctx.font = '9px "Press Start 2P"';
+                ctx.fillStyle = '#78350f';
+                ctx.fillText('SCORE', canvas.width / 2 - 60, boardY + 85);
+                ctx.fillText('BEST', canvas.width / 2 + 60, boardY + 85);
+
+                ctx.font = '22px "Press Start 2P"';
+                ctx.fillStyle = '#1e293b';
+                ctx.fillText(score, canvas.width / 2 - 60, boardY + 115);
+                ctx.fillText(highScore, canvas.width / 2 + 60, boardY + 115);
+
+                if (Math.floor(Date.now() / 400) % 2 === 0) {
+                    ctx.font = '8px "Press Start 2P"';
+                    ctx.fillStyle = '#b45309';
+                    ctx.fillText('CLICK OR SPACE TO RESTART', canvas.width / 2, boardY + 155);
+                }
+            }
+
+            // 13. Fade Transition black curtain overlay
+            if (fadeAlpha > 0) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function drawParticles(c) {
+            for (let p of particles) {
+                p.draw(c);
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // --- Controls Event Handlers ---
+
+        document.addEventListener('keydown', e => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameOver) {
+                    triggerRestart();
+                } else {
+                    jump();
+                }
+            }
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            if (gameOver) {
+                triggerRestart();
+            } else {
+                jump();
+            }
+        });
+
+        // Touch support for mobile browsers
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameOver) {
+                triggerRestart();
+            } else {
+                jump();
+            }
+        });
+
+        restartBtn.addEventListener('click', triggerRestart);
+
+        // --- Boot Game ---
+        reset();
+        loop();
+    </script>
+</body>
+</html>
