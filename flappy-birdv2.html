@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flappy Bird - Level 2 (Feel & Juice)</title>
+    <!-- Import Google Font for retro pixel graphics style -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            background: radial-gradient(circle, #2c3e50 0%, #0f171e 100%);
+            font-family: 'Press Start 2P', monospace, sans-serif;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .game-container {
+            text-align: center;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin: 0 0 5px 0;
+            color: #ffd700;
+            text-shadow: 3px 3px 0px #000;
+            letter-spacing: 1px;
+        }
+
+        .subtitle {
+            font-size: 9px;
+            color: #88aa88;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        canvas {
+            display: block;
+            background: #87CEEB;
+            border: 6px solid #222;
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            cursor: pointer;
+        }
+
+        #restart {
+            display: none;
+            margin-top: 15px;
+            padding: 12px 24px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            color: #fff;
+            background: #df9e51;
+            border: 3px solid #222;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #222;
+            transition: all 0.1s ease;
+            text-transform: uppercase;
+        }
+
+        #restart:hover {
+            background: #ffa834;
+        }
+
+        #restart:active {
+            transform: translateY(4px);
+            box-shadow: 0 0px 0 #222;
+        }
+
+        .controls-hint {
+            font-size: 9px;
+            color: #666;
+            margin-top: 15px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <h1>FLAPPY BIRD</h1>
+        <div class="subtitle">Level 2: Feel & Juice</div>
+        <canvas id="game" width="500" height="500"></canvas>
+        <button id="restart">Restart Game</button>
+        <div class="controls-hint">
+            Press SPACEBAR or CLICK Canvas to flap.<br>
+            Game responds at a smooth, locked 60 FPS.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Physics constants (fine-tuned for fluid game feel)
+        const GRAVITY = 0.28;
+        const JUMP = -6.2;
+        const MAX_FALL_SPEED = 8.5;
+        const PIPE_WIDTH = 70;
+        const PIPE_GAP = 125;
+        const PIPE_SPEED = 3.2;
+        const PIPE_SPACING = 230; // Consistent pipe spacing
+        const GROUND_HEIGHT = 65;
+
+        // Game State Variables
+        let bird;
+        let pipes;
+        let clouds;
+        let score;
+        let highScore = parseInt(localStorage.getItem('flappy_highscore')) || 0;
+        let gameOver;
+        
+        // Juice Effects state
+        let scoreScale = 1.0;
+        let shakeIntensity = 0;
+        let flashAlpha = 0;
+        let fadeAlpha = 0;
+        let fadeAction = null; // 'out' (fading to black) or 'in' (fading back)
+        let groundOffset = 0;
+
+        function reset() {
+            bird = { 
+                x: 100, 
+                y: 200, 
+                vy: 0, 
+                size: 18, 
+                angle: 0 
+            };
+            pipes = [];
+            score = 0;
+            gameOver = false;
+            scoreScale = 1.0;
+            shakeIntensity = 0;
+            flashAlpha = 0;
+            restartBtn.style.display = 'none';
+
+            // Pre-spawn first pipe
+            spawnPipe();
+        }
+
+        // Initialize clouds with varying sizes, heights and speeds
+        clouds = [
+            { x: 50, y: 70, size: 25, speed: 0.12 },
+            { x: 230, y: 110, size: 35, speed: 0.18 },
+            { x: 410, y: 50, size: 20, speed: 0.08 }
+        ];
+
+        function spawnPipe() {
+            const margin = 50;
+            // Ensure gap centers stay in middle ranges
+            const minGapY = margin;
+            const maxGapY = canvas.height - GROUND_HEIGHT - PIPE_GAP - margin;
+            const gapY = Math.random() * (maxGapY - minGapY) + minGapY;
+            pipes.push({ x: canvas.width, gapY, passed: false });
+        }
+
+        function jump() {
+            if (gameOver || fadeAction !== null) return;
+            bird.vy = JUMP;
+        }
+
+        function triggerDeath() {
+            if (!gameOver) {
+                gameOver = true;
+                shakeIntensity = 12; // Camera shake intensity
+                flashAlpha = 0.75;    // Screen flash alpha
+                
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('flappy_highscore', highScore);
+                }
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+
+        function triggerRestart() {
+            if (fadeAction === null) {
+                fadeAction = 'out';
+                fadeAlpha = 0;
+                restartBtn.style.display = 'none';
+            }
+        }
+
+        function update() {
+            // Screen transition logic (fade out to black -> reset -> fade in)
+            if (fadeAction === 'out') {
+                fadeAlpha += 0.08;
+                if (fadeAlpha >= 1.0) {
+                    fadeAlpha = 1.0;
+                    reset();
+                    fadeAction = 'in';
+                }
+                return; // freeze updates during fade peak
+            } else if (fadeAction === 'in') {
+                fadeAlpha -= 0.08;
+                if (fadeAlpha <= 0.0) {
+                    fadeAlpha = 0.0;
+                    fadeAction = null;
+                }
+            }
+
+            if (gameOver) {
+                // Decays screen effects during death screen
+                if (shakeIntensity > 0) {
+                    shakeIntensity *= 0.85;
+                    if (shakeIntensity < 0.1) shakeIntensity = 0;
+                }
+                if (flashAlpha > 0) {
+                    flashAlpha -= 0.05;
+                }
+                return;
+            }
+
+            // --- Game Object Updates ---
+
+            // Background Clouds
+            for (let cloud of clouds) {
+                cloud.x -= cloud.speed;
+                if (cloud.x < -cloud.size * 3) {
+                    cloud.x = canvas.width + cloud.size * 3;
+                    cloud.y = Math.random() * 120 + 30;
+                }
+            }
+
+            // Scrolling ground alignment
+            groundOffset = (groundOffset - PIPE_SPEED) % 24;
+
+            // Bird physics
+            bird.vy += GRAVITY;
+            if (bird.vy > MAX_FALL_SPEED) bird.vy = MAX_FALL_SPEED;
+            bird.y += bird.vy;
+
+            // Rotation angle lerp based on upward/downward velocity
+            let targetAngle = 0;
+            if (bird.vy < 0) {
+                targetAngle = -0.4; // Point slightly up when jumping
+            } else {
+                targetAngle = Math.min(1.2, bird.vy * 0.16); // Face down as velocity increases
+            }
+            bird.angle += (targetAngle - bird.angle) * 0.16;
+
+            // Check boundaries
+            const birdCollisionMargin = 3;
+            const birdTop = bird.y + birdCollisionMargin;
+            const birdBottom = bird.y + bird.size - birdCollisionMargin;
+
+            if (birdTop < 0 || birdBottom > canvas.height - GROUND_HEIGHT) {
+                triggerDeath();
+            }
+
+            // Pipe spawn logic
+            if (pipes.length === 0 || (canvas.width - pipes[pipes.length - 1].x) >= PIPE_SPACING) {
+                spawnPipe();
+            }
+
+            // Update pipes and collisions
+            for (let i = pipes.length - 1; i >= 0; i--) {
+                const pipe = pipes[i];
+                pipe.x -= PIPE_SPEED;
+
+                // Remove offscreen pipes
+                if (pipe.x < -PIPE_WIDTH - 20) {
+                    pipes.splice(i, 1);
+                    continue;
+                }
+
+                // Hitbox calculations (forgiving collision bounding boxes)
+                const birdLeft = bird.x + birdCollisionMargin;
+                const birdRight = bird.x + bird.size - birdCollisionMargin;
+
+                const hitX = birdRight > pipe.x && birdLeft < pipe.x + PIPE_WIDTH;
+                if (hitX) {
+                    const hitY = birdTop < pipe.gapY || birdBottom > pipe.gapY + PIPE_GAP;
+                    if (hitY) {
+                        triggerDeath();
+                    }
+                }
+
+                // Scoring
+                if (!pipe.passed && pipe.x + PIPE_WIDTH < bird.x) {
+                    pipe.passed = true;
+                    score++;
+                    scoreScale = 1.45; // trigger score pop spring
+                }
+            }
+
+            // Damping for Score Pop spring
+            scoreScale += (1.0 - scoreScale) * 0.15;
+
+            // Decays flash effect
+            if (flashAlpha > 0) {
+                flashAlpha -= 0.05;
+            }
+        }
+
+        function draw() {
+            // Apply camera shake translation
+            ctx.save();
+            if (shakeIntensity > 0) {
+                const dx = (Math.random() - 0.5) * shakeIntensity;
+                const dy = (Math.random() - 0.5) * shakeIntensity;
+                ctx.translate(dx, dy);
+            }
+
+            // 1. Draw Subtle Sky Gradient
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGrad.addColorStop(0, '#3b82f6'); // Deep sky blue
+            skyGrad.addColorStop(0.7, '#60a5fa'); // Classic light blue
+            skyGrad.addColorStop(1, '#a5f3fc'); // Warm sunset yellow-blue
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 2. Draw Clouds
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            for (let cloud of clouds) {
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y, cloud.size, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 0.6, cloud.y - cloud.size * 0.25, cloud.size * 0.8, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 1.2, cloud.y, cloud.size * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 3. Draw Retro Shaded Pipes
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#222';
+            for (let pipe of pipes) {
+                const topHeight = pipe.gapY;
+                const lipHeight = 24;
+                const lipWidth = PIPE_WIDTH + 8;
+                const lipX = pipe.x - 4;
+
+                // --- Top Pipe Drawing ---
+                let gradTop = ctx.createLinearGradient(pipe.x, 0, pipe.x + PIPE_WIDTH, 0);
+                gradTop.addColorStop(0, '#73c93a');
+                gradTop.addColorStop(0.25, '#a5f560');
+                gradTop.addColorStop(0.7, '#4e991e');
+                gradTop.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradTop;
+                ctx.fillRect(pipe.x, 0, PIPE_WIDTH, topHeight);
+                ctx.strokeRect(pipe.x, -3, PIPE_WIDTH, topHeight + 3);
+
+                // Top Pipe Lip
+                let gradLip = ctx.createLinearGradient(lipX, 0, lipX + lipWidth, 0);
+                gradLip.addColorStop(0, '#73c93a');
+                gradLip.addColorStop(0.25, '#a5f560');
+                gradLip.addColorStop(0.7, '#4e991e');
+                gradLip.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradLip;
+                ctx.fillRect(lipX, topHeight - lipHeight, lipWidth, lipHeight);
+                ctx.strokeRect(lipX, topHeight - lipHeight, lipWidth, lipHeight);
+
+                // --- Bottom Pipe Drawing ---
+                const bottomY = pipe.gapY + PIPE_GAP;
+                const bottomHeight = canvas.height - GROUND_HEIGHT - bottomY;
+                
+                let gradBottom = ctx.createLinearGradient(pipe.x, 0, pipe.x + PIPE_WIDTH, 0);
+                gradBottom.addColorStop(0, '#73c93a');
+                gradBottom.addColorStop(0.25, '#a5f560');
+                gradBottom.addColorStop(0.7, '#4e991e');
+                gradBottom.addColorStop(1, '#2c580c');
+                ctx.fillStyle = gradBottom;
+                ctx.fillRect(pipe.x, bottomY, PIPE_WIDTH, bottomHeight);
+                ctx.strokeRect(pipe.x, bottomY, PIPE_WIDTH, bottomHeight + 3);
+
+                // Bottom Pipe Lip
+                ctx.fillStyle = gradLip;
+                ctx.fillRect(lipX, bottomY, lipWidth, lipHeight);
+                ctx.strokeRect(lipX, bottomY, lipWidth, lipHeight);
+            }
+
+            // 4. Draw Polished Vector Bird
+            ctx.save();
+            ctx.translate(bird.x + bird.size / 2, bird.y + bird.size / 2);
+            ctx.rotate(bird.angle);
+
+            // Body (Yellow rounded ellipse)
+            ctx.fillStyle = '#ffdf00';
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, bird.size * 0.72, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Belly (White highlight)
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(-bird.size * 0.2, bird.size * 0.2, bird.size * 0.42, 0, Math.PI, false);
+            ctx.fill();
+
+            // Eye (White circle + black pupil)
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(bird.size * 0.25, -bird.size * 0.25, bird.size * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(bird.size * 0.32, -bird.size * 0.25, bird.size * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Beak (Orange styled triangle)
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.moveTo(bird.size * 0.52, -bird.size * 0.12);
+            ctx.lineTo(bird.size * 1.05, 0);
+            ctx.lineTo(bird.size * 0.52, bird.size * 0.25);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Wing (Flapping animated wing)
+            const flapDir = Math.sin(Date.now() * 0.015) * 0.4;
+            ctx.save();
+            ctx.translate(-bird.size * 0.25, -bird.size * 0.05);
+            ctx.rotate(flapDir);
+            ctx.fillStyle = '#f59e0b'; // Wing orange-yellow
+            ctx.beginPath();
+            ctx.ellipse(0, 0, bird.size * 0.38, bird.size * 0.25, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.restore(); // Restore bird translation
+
+            // 5. Draw Scrolling Ground Grid
+            // Dirt Base
+            ctx.fillStyle = '#d97706'; // Dark warm brown
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
+            
+            // Grass top
+            ctx.fillStyle = '#22c55e'; // Bright grass green
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, 14);
+            
+            // Grass stripes (scrolling effect)
+            ctx.fillStyle = '#15803d'; // Dark grass green
+            for (let x = groundOffset; x < canvas.width + 24; x += 24) {
+                ctx.fillRect(x, canvas.height - GROUND_HEIGHT, 8, 14);
+            }
+
+            // Ground Top Border Line
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - GROUND_HEIGHT);
+            ctx.lineTo(canvas.width, canvas.height - GROUND_HEIGHT);
+            ctx.stroke();
+
+            // 6. Draw HUD Score (Classic centered pop counter)
+            if (!gameOver) {
+                ctx.save();
+                ctx.translate(canvas.width / 2, 70);
+                ctx.scale(scoreScale, scoreScale);
+                ctx.font = '36px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Text Shadow
+                ctx.fillStyle = '#000';
+                ctx.fillText(score, 4, 4);
+                
+                // Foreground Text
+                ctx.fillStyle = '#fff';
+                ctx.fillText(score, 0, 0);
+                ctx.restore();
+            }
+
+            ctx.restore(); // Restore camera shake
+
+            // 7. Flash Overlay (reaction on death)
+            if (flashAlpha > 0) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 8. Retro Game Over Screen Overlay
+            if (gameOver && fadeAction === null) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const boardWidth = 320;
+                const boardHeight = 180;
+                const boardX = (canvas.width - boardWidth) / 2;
+                const boardY = (canvas.height - boardHeight) / 2;
+
+                // Board Shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(boardX + 6, boardY + 6, boardWidth, boardHeight);
+
+                // Main Scoreboard Board
+                ctx.fillStyle = '#fef08a'; // Pastel yellow retro paper
+                ctx.strokeStyle = '#d97706'; // Brown-orange border
+                ctx.lineWidth = 5;
+                ctx.fillRect(boardX, boardY, boardWidth, boardHeight);
+                ctx.strokeRect(boardX, boardY, boardWidth, boardHeight);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // "GAME OVER" Title
+                ctx.font = '18px "Press Start 2P"';
+                ctx.fillStyle = '#dc2626'; // Deep red
+                ctx.fillText('GAME OVER', canvas.width / 2, boardY + 35);
+
+                // Labels
+                ctx.font = '9px "Press Start 2P"';
+                ctx.fillStyle = '#78350f';
+                ctx.fillText('SCORE', canvas.width / 2 - 60, boardY + 85);
+                ctx.fillText('BEST', canvas.width / 2 + 60, boardY + 85);
+
+                // Values
+                ctx.font = '22px "Press Start 2P"';
+                ctx.fillStyle = '#1e293b';
+                ctx.fillText(score, canvas.width / 2 - 60, boardY + 115);
+                ctx.fillText(highScore, canvas.width / 2 + 60, boardY + 115);
+
+                // Blinking spacebar guide
+                if (Math.floor(Date.now() / 400) % 2 === 0) {
+                    ctx.font = '8px "Press Start 2P"';
+                    ctx.fillStyle = '#b45309';
+                    ctx.fillText('CLICK OR SPACE TO RESTART', canvas.width / 2, boardY + 155);
+                }
+            }
+
+            // 9. Black Screen Fade Transition Overlay
+            if (fadeAlpha > 0) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // --- Controls Event Hookups ---
+
+        document.addEventListener('keydown', e => {
+            if (e.code === 'Space') {
+                e.preventDefault(); // Stop spacebar page scrolling
+                if (gameOver) {
+                    triggerRestart();
+                } else {
+                    jump();
+                }
+            }
+        });
+
+        canvas.addEventListener('click', () => {
+            if (gameOver) {
+                triggerRestart();
+            } else {
+                jump();
+            }
+        });
+
+        restartBtn.addEventListener('click', triggerRestart);
+
+        // --- Game Boot ---
+        reset();
+        loop();
+    </script>
+</body>
+</html>
